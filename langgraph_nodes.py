@@ -22,22 +22,36 @@ else:
 # PROMPT TEMPLATES (from the plan)
 # =============================================================================
 
-PROMPT_IMPROVER_SYSTEM = """You are a prompt improvement assistant for SQL generation. Input: the user's raw natural-language request and the database schema (tables and columns). Output: a single, clearer, more explicit instruction that a SQL generator can use to produce a safe, read-only SELECT query. The improved prompt must:
-- Clarify date ranges, filters, required columns (if inferable).  
-- Suggest sensible defaults if user omitted key info (e.g., default date range: none; default row cap: 500 display).  
-- Preserve user intent and avoid changing the question's meaning.  
-- If the original request is ambiguous in a way you cannot resolve, add a short explicit note like: "[NOTE: ambiguous: user didn't specify X — defaulting to Y]".
+PROMPT_IMPROVER_SYSTEM = """You are a prompt improvement assistant for SQL generation. Input: the user's raw natural-language request and the database schema (tables and columns). Output: a single, clearer, more explicit instruction that a SQL generator can use to produce a safe, read-only SELECT query.
 
-Return only the improved prompt text (no explanation). Keep it concise (1–3 sentences)."""
+CRITICAL RULES:
+1. Write in IMPERATIVE/INSTRUCTIONAL tone (third-person instruction to SQL generator), NOT conversational tone
+2. PRESERVE the user's original intent - even if tables/columns don't exist in schema, keep them in the improved prompt
+3. DO NOT change, correct, or substitute table/column names - validation happens later
+4. Add clarifications for: date ranges, filters, specific columns, sorting, grouping
+5. Suggest sensible defaults ONLY for: row limits (default 500), date ranges (if unspecified), column selection (if vague)
+6. If user's request references non-existent tables/columns, preserve them AS-IS and add: "[NOTE: table/column 'X' not found in schema - will be validated in next step]"
+7. If ambiguous in other ways, add: "[NOTE: ambiguous - assuming X]"
+
+CORRECT FORMAT (imperative):
+"Select project_id, project_name, start_date from projects where start_date between '2021-01-01' and '2024-12-31', order by start_date ascending."
+
+INCORRECT FORMAT (conversational):
+"Please show me the projects, specifying which columns you want..."
+
+Return only the improved prompt text (no preamble, no explanation). Keep it concise (1-3 sentences)."""
 
 QUERY_GENERATOR_SYSTEM = """You are an assistant that converts a confirmed natural-language request into one correct, read-only SQL SELECT statement. Use only the provided schema. Rules:
 1. Produce a single SELECT statement (no DML/DDL/multiple statements).  
-2. Validate all tables/columns — if any referenced item doesn't exist, output a short error naming it and stop.  
-3. Do not invent joins or columns not present in the schema.  
-4. If the user specified columns, include exactly those columns. If not, SELECT * is allowed.  
-5. Do not add LIMIT to the executed query unless the DB cannot handle large results; instead enforce a UI display cap.  
+2. VALIDATE all tables/columns against the schema - if ANY referenced table or column doesn't exist, respond ONLY with: "ERROR: Table 'X' does not exist in schema. Available tables: [list]" or "ERROR: Column 'Y' does not exist in table 'X'. Available columns: [list]"
+3. Do not attempt to correct, guess, or substitute non-existent tables/columns - return an error immediately
+4. Do not invent joins or columns not present in the schema.  
+5. If the user specified columns, include exactly those columns. If not, SELECT * is allowed.  
+6. Do not add LIMIT to the executed query unless the DB cannot handle large results; instead enforce a UI display cap.  
+7. For date filters, use proper SQL date format: 'YYYY-MM-DD'
+8. Ensure proper JOIN syntax if multiple tables are referenced
 
-Output: only the final SQL in a single code block."""
+Output: only the final SQL in a single code block, OR an error message starting with "ERROR:"."""
 
 INSIGHTS_GENERATOR_SYSTEM = """You are a concise data analyst. Input: (a) original user request; (b) the query result sample or full table (structured rows + column names). Decide silently whether the user likely wants insights. If yes, output up to 3 concise insights (each 1–3 short sentences). Each insight should be factual, include simple numeric facts where possible (counts, percent change, top-K), and avoid speculative language. If no insights are needed, output nothing. Do not ask follow-up questions, and do not suggest charts."""
 
@@ -210,15 +224,15 @@ def query_generator_node(state: Dict[str, Any]) -> Dict[str, Any]:
 Database schema:
 {schema_text}
 
-Remember: produce only a single SELECT statement. Validate all tables and columns."""
+Remember: produce only a single SELECT statement. Validate all tables and columns against the schema above."""
     
     sql_response = call_llm(QUERY_GENERATOR_SYSTEM, user_message)
     
-    # Check if response contains an error
-    if "error" in sql_response.lower() and "ERROR:" in sql_response:
+    # Check if response is an error
+    if sql_response.strip().startswith("ERROR:"):
         return {
             **state,
-            "error": sql_response,
+            "error": sql_response.strip(),
             "sql_valid": False
         }
     
@@ -226,12 +240,23 @@ Remember: produce only a single SELECT statement. Validate all tables and column
     sql_query = extract_sql_from_response(sql_response)
     
     # Basic validation - check if it's a SELECT statement
-    if not sql_query.upper().strip().startswith("SELECT"):
+    sql_upper = sql_query.upper().strip()
+    if not sql_upper.startswith("SELECT"):
         return {
             **state,
-            "error": "Generated query is not a SELECT statement",
+            "error": "Generated query is not a SELECT statement. This system only supports read-only queries.",
             "sql_valid": False
         }
+    
+    # Additional safety check - reject if contains DML/DDL keywords
+    dangerous_keywords = ["INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "REVOKE"]
+    for keyword in dangerous_keywords:
+        if keyword in sql_upper:
+            return {
+                **state,
+                "error": f"Query contains forbidden keyword '{keyword}'. Only SELECT queries are allowed.",
+                "sql_valid": False
+            }
     
     return {
         **state,
@@ -261,7 +286,7 @@ def query_runner_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
         with engine.connect() as connection:
             # Set statement timeout to prevent long-running queries
             connection.execute(text("SET statement_timeout = '20s'"))
-            
+            print(f"Executing query:\n{sql_query}\n")
             # Execute the user's query
             result = connection.execute(text(sql_query))
             
