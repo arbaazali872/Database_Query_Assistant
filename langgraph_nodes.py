@@ -53,7 +53,16 @@ QUERY_GENERATOR_SYSTEM = """You are an assistant that converts a confirmed natur
 
 Output: only the final SQL in a single code block, OR an error message starting with "ERROR:"."""
 
-INSIGHTS_GENERATOR_SYSTEM = """You are a concise data analyst. Input: (a) original user request; (b) the query result sample or full table (structured rows + column names). Decide silently whether the user likely wants insights. If yes, output up to 3 concise insights (each 1–3 short sentences). Each insight should be factual, include simple numeric facts where possible (counts, percent change, top-K), and avoid speculative language. If no insights are needed, output nothing. Do not ask follow-up questions, and do not suggest charts."""
+INSIGHTS_GENERATOR_SYSTEM = """You are a concise data analyst. Input: (a) original user request; (b) the query result sample or full table (structured rows + column names); (c) whether the result is empty (0 rows).
+
+RULES:
+1. If result has 0 rows: Generate 1-2 insights explaining what this means in the context of the user's question. Focus on what the empty result tells us about the data. Example: "No projects exceeded their budget, indicating effective budget management across all projects."
+2. If result has data: Decide silently whether insights would add value. If yes, output up to 3 concise insights (each 1-3 short sentences).
+3. Each insight should be factual, include simple numeric facts where possible (counts, percent change, top-K), and avoid speculative language.
+4. Do not ask follow-up questions, and do not suggest charts.
+5. If insights wouldn't add value to a simple data lookup, output nothing.
+
+Output: The insights text only (no preamble like "Here are the insights:")."""
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -286,7 +295,7 @@ def query_runner_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
         with engine.connect() as connection:
             # Set statement timeout to prevent long-running queries
             connection.execute(text("SET statement_timeout = '20s'"))
-            print(f"Executing query:\n{sql_query}\n")
+            
             # Execute the user's query
             result = connection.execute(text(sql_query))
             
@@ -352,11 +361,19 @@ def user_output_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if total_rows > display_cap:
         display_results = query_results.head(display_cap)
     
+    # Create user-friendly message for empty results
+    result_message = None
+    if total_rows == 0:
+        result_message = "✅ Query executed successfully, but returned 0 rows. This means no data matched your criteria."
+    elif total_rows > display_cap:
+        result_message = f"⚠️ Showing {display_cap} of {total_rows} rows. Query returned more data than can be displayed."
+    
     metadata = {
         "total_rows": total_rows,
-        "displayed_rows": len(display_results),
+        "displayed_rows": len(display_results) if display_results is not None else 0,
         "execution_time": state.get("execution_time", 0),
-        "capped": total_rows > display_cap
+        "capped": total_rows > display_cap,
+        "result_message": result_message
     }
     
     return {
@@ -368,22 +385,44 @@ def user_output_node(state: Dict[str, Any]) -> Dict[str, Any]:
 def insights_generator_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Generates insights based on query results (optional, silent decision)
+    Special handling for empty results (0 rows)
     """
     user_input = state["user_input"]
     query_results = state.get("query_results")
+    total_rows = state.get("total_rows", 0)
     
+    # Special case: Empty results (0 rows)
+    if total_rows == 0:
+        # ALWAYS generate insights for empty results to explain what it means
+        user_message = f"""Original request: {user_input}
+
+Query returned 0 rows (empty result set).
+Columns that would have been returned: {', '.join(query_results.columns.tolist()) if query_results is not None else 'N/A'}
+
+Explain what this empty result means in the context of the user's question."""
+        
+        insights = call_llm(INSIGHTS_GENERATOR_SYSTEM, user_message)
+        
+        if insights and len(insights) > 10:
+            return {**state, "insights": insights}
+        else:
+            # Fallback if LLM doesn't provide good insights
+            return {**state, "insights": "No data matched your query criteria. This could mean the conditions specified don't apply to any records in the database."}
+    
+    # Regular case: Results with data
     if query_results is None or len(query_results) == 0:
         return {**state, "insights": None}
     
     # Check heuristics for generating insights
     insight_keywords = ["trend", "compare", "analysis", "insight", "summary", 
-                       "top", "breakdown", "average", "mean", "median", "percent"]
+                       "top", "breakdown", "average", "mean", "median", "percent",
+                       "total", "count", "over", "under", "exceed", "below"]
     
     should_generate = any(kw in user_input.lower() for kw in insight_keywords)
     
     # Also generate if we have numeric columns and enough rows
     numeric_cols = query_results.select_dtypes(include=['number']).columns
-    if len(numeric_cols) > 0 and len(query_results) >= 20:
+    if len(numeric_cols) > 0 and len(query_results) >= 3:  # Lowered threshold from 20 to 3
         should_generate = True
     
     if not should_generate:
