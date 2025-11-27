@@ -3,9 +3,20 @@ import json
 import time
 from typing import Dict, Any
 from openai import OpenAI
+import pandas as pd
+from sqlalchemy import create_engine, text, inspect
+from sqlalchemy.exc import SQLAlchemyError
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Initialize database connection
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL:
+    engine = create_engine(DATABASE_URL)
+else:
+    engine = None
+    print("⚠️ WARNING: DATABASE_URL not found in environment variables")
 
 # =============================================================================
 # PROMPT TEMPLATES (from the plan)
@@ -34,7 +45,7 @@ INSIGHTS_GENERATOR_SYSTEM = """You are a concise data analyst. Input: (a) origin
 # HELPER FUNCTIONS
 # =============================================================================
 
-def call_llm(system_prompt: str, user_message: str, model: str = "gpt-4.1-nano") -> str:
+def call_llm(system_prompt: str, user_message: str, model: str = "gpt-4o-mini") -> str:
     """Helper function to call OpenAI API"""
     try:
         response = client.chat.completions.create(
@@ -69,64 +80,99 @@ def user_input_node(state: Dict[str, Any]) -> Dict[str, Any]:
     In Streamlit, this will be called after user submits the form
     """
     # Just pass through - actual input comes from Streamlit
-    return {
-        "edit_count": state.get("edit_count", 0),
-        "metadata": state.get("metadata", {})
-    }
+    # Ensure we preserve all state
+    return state
 
 def sql_schema_retriever(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Tool to retrieve database schema
-    For now, returns a placeholder - you'll provide the real schema later
+    Tool to retrieve database schema from the connected PostgreSQL database
+    Fetches tables, columns, data types, primary keys, and foreign keys
     """
-    # Placeholder schema - you'll replace this with your actual schema
-    placeholder_schema = {
-        "tables": {
-            "projects": {
-                "columns": {
-                    "project_id": "INTEGER",
-                    "project_name": "TEXT",
-                    "start_date": "DATE",
-                    "end_date": "DATE",
-                    "client_id": "INTEGER",
-                    "status": "TEXT",
-                    "budget": "NUMERIC"
+    if not engine:
+        # Fallback to placeholder if no database connection
+        print("⚠️ No database connection - using placeholder schema")
+        placeholder_schema = {
+            "tables": {
+                "projects": {
+                    "columns": {
+                        "project_id": "INTEGER",
+                        "project_name": "TEXT",
+                        "start_date": "DATE",
+                        "end_date": "DATE",
+                        "client_id": "INTEGER",
+                        "status": "TEXT",
+                        "budget": "NUMERIC"
+                    },
+                    "primary_key": "project_id",
+                    "foreign_keys": {"client_id": "clients.client_id"}
                 },
-                "primary_key": "project_id",
-                "foreign_keys": {"client_id": "clients.client_id"}
-            },
-            "clients": {
-                "columns": {
-                    "client_id": "INTEGER",
-                    "client_name": "TEXT",
-                    "industry": "TEXT",
-                    "contact_email": "TEXT"
+                "clients": {
+                    "columns": {
+                        "client_id": "INTEGER",
+                        "client_name": "TEXT",
+                        "industry": "TEXT",
+                        "contact_email": "TEXT"
+                    },
+                    "primary_key": "client_id",
+                    "foreign_keys": {}
                 },
-                "primary_key": "client_id",
-                "foreign_keys": {}
-            },
-            "orders": {
-                "columns": {
-                    "order_id": "INTEGER",
-                    "project_id": "INTEGER",
-                    "order_date": "DATE",
-                    "amount": "NUMERIC",
-                    "status": "TEXT"
-                },
-                "primary_key": "order_id",
-                "foreign_keys": {"project_id": "projects.project_id"}
+                "orders": {
+                    "columns": {
+                        "order_id": "INTEGER",
+                        "project_id": "INTEGER",
+                        "order_date": "DATE",
+                        "amount": "NUMERIC",
+                        "status": "TEXT"
+                    },
+                    "primary_key": "order_id",
+                    "foreign_keys": {"project_id": "projects.project_id"}
+                }
             }
         }
-    }
+        return {**state, "schema": placeholder_schema}
     
-    return {"schema": placeholder_schema}
+    try:
+        # Use SQLAlchemy inspector to get schema information
+        inspector = inspect(engine)
+        schema = {"tables": {}}
+        
+        # Get all table names
+        table_names = inspector.get_table_names()
+        
+        for table_name in table_names:
+            # Get columns with their types
+            columns = {}
+            for column in inspector.get_columns(table_name):
+                columns[column['name']] = str(column['type'])
+            
+            # Get primary key
+            pk_constraint = inspector.get_pk_constraint(table_name)
+            primary_key = pk_constraint['constrained_columns'][0] if pk_constraint['constrained_columns'] else None
+            
+            # Get foreign keys
+            foreign_keys = {}
+            for fk in inspector.get_foreign_keys(table_name):
+                for local_col, remote_col in zip(fk['constrained_columns'], fk['referred_columns']):
+                    foreign_keys[local_col] = f"{fk['referred_table']}.{remote_col}"
+            
+            schema["tables"][table_name] = {
+                "columns": columns,
+                "primary_key": primary_key,
+                "foreign_keys": foreign_keys
+            }
+        
+        print(f"✅ Successfully retrieved schema for {len(table_names)} tables: {', '.join(table_names)}")
+        return {**state, "schema": schema}
+        
+    except Exception as e:
+        print(f"❌ Error retrieving schema: {str(e)}")
+        return {**state, "error": f"Schema retrieval failed: {str(e)}"}
 
 def prompt_improver_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Improves the user's raw prompt using LLM
     Returns improved prompt for user confirmation
     """
-    print(f"state in prompt_improver_node: {state}")
     user_input = state["user_input"]
     schema = state.get("schema", {})
     
@@ -142,9 +188,11 @@ Improve this prompt for SQL generation."""
     
     improved_prompt = call_llm(PROMPT_IMPROVER_SYSTEM, user_message)
     
+    # Return full state with updates
     return {
+        **state,
         "improved_prompt": improved_prompt,
-        "user_confirmed": None  # Will be set by UI
+        "user_confirmed": state.get("user_confirmed")  # Preserve confirmation status
     }
 
 def query_generator_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -169,6 +217,7 @@ Remember: produce only a single SELECT statement. Validate all tables and column
     # Check if response contains an error
     if "error" in sql_response.lower() and "ERROR:" in sql_response:
         return {
+            **state,
             "error": sql_response,
             "sql_valid": False
         }
@@ -179,11 +228,13 @@ Remember: produce only a single SELECT statement. Validate all tables and column
     # Basic validation - check if it's a SELECT statement
     if not sql_query.upper().strip().startswith("SELECT"):
         return {
+            **state,
             "error": "Generated query is not a SELECT statement",
             "sql_valid": False
         }
     
     return {
+        **state,
         "sql_query": sql_query,
         "sql_valid": True,
         "error": None
@@ -191,35 +242,76 @@ Remember: produce only a single SELECT statement. Validate all tables and column
 
 def query_runner_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Executes the SQL query (read-only with timeout)
-    For now, returns mock data - you'll connect to real DB later
+    Executes the SQL query against the PostgreSQL database (with timeout)
+    Enforces read-only by wrapping query in a transaction that rolls back
     """
     sql_query = state["sql_query"]
     
-    # TODO: Replace with actual DB execution
-    # For now, return mock success
-    import pandas as pd
+    if not engine:
+        return {
+            **state,
+            "error": "Database connection not available. Please check DATABASE_URL in .env file",
+            "query_results": None
+        }
     
-    # Mock result
-    mock_data = {
-        "project_id": [1, 2, 3],
-        "project_name": ["Project A", "Project B", "Project C"],
-        "status": ["Active", "Completed", "Active"]
-    }
+    try:
+        start_time = time.time()
+        
+        # Execute query with timeout (20 seconds default)
+        with engine.connect() as connection:
+            # Set statement timeout to prevent long-running queries
+            connection.execute(text("SET statement_timeout = '20s'"))
+            
+            # Execute the user's query
+            result = connection.execute(text(sql_query))
+            
+            # Fetch results into pandas DataFrame
+            query_results = pd.DataFrame(result.fetchall(), columns=result.keys())
+            
+            # Note: We're not committing anything, so even if someone tries DML,
+            # it won't persist (but ideally use a read-only user in production)
+        
+        execution_time = time.time() - start_time
+        total_rows = len(query_results)
+        
+        print(f"✅ Query executed successfully: {total_rows} rows in {execution_time:.3f}s")
+        
+        return {
+            **state,
+            "query_results": query_results,
+            "total_rows": total_rows,
+            "execution_time": execution_time,
+            "error": None
+        }
+        
+    except SQLAlchemyError as e:
+        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        
+        # Check for common errors
+        if "timeout" in error_msg.lower():
+            error_msg = "Query exceeded time limit (20s). Please add filters or narrow your query."
+        elif "permission denied" in error_msg.lower():
+            error_msg = "Permission denied. You don't have access to read from this table."
+        
+        print(f"❌ Query execution failed: {error_msg}")
+        
+        return {
+            **state,
+            "error": f"Query execution failed: {error_msg}",
+            "query_results": None,
+            "total_rows": 0,
+            "execution_time": 0
+        }
     
-    start_time = time.time()
-    
-    # Simulate query execution
-    query_results = pd.DataFrame(mock_data)
-    
-    execution_time = time.time() - start_time
-    
-    return {
-        "query_results": query_results,
-        "total_rows": len(query_results),
-        "execution_time": execution_time,
-        "error": None
-    }
+    except Exception as e:
+        print(f"❌ Unexpected error: {str(e)}")
+        return {
+            **state,
+            "error": f"Unexpected error: {str(e)}",
+            "query_results": None,
+            "total_rows": 0,
+            "execution_time": 0
+        }
 
 def user_output_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -243,6 +335,7 @@ def user_output_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
     
     return {
+        **state,
         "query_results": display_results,
         "metadata": metadata
     }
@@ -255,7 +348,7 @@ def insights_generator_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
     query_results = state.get("query_results")
     
     if query_results is None or len(query_results) == 0:
-        return {"insights": None}
+        return {**state, "insights": None}
     
     # Check heuristics for generating insights
     insight_keywords = ["trend", "compare", "analysis", "insight", "summary", 
@@ -269,7 +362,7 @@ def insights_generator_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
         should_generate = True
     
     if not should_generate:
-        return {"insights": None}
+        return {**state, "insights": None}
     
     # Prepare data summary for LLM
     data_summary = f"""
@@ -293,9 +386,9 @@ Generate 0-3 concise insights if appropriate."""
     
     # If LLM returns something meaningful, include it
     if insights and len(insights) > 10 and "no insight" not in insights.lower():
-        return {"insights": insights}
+        return {**state, "insights": insights}
     
-    return {"insights": None}
+    return {**state, "insights": None}
 
 # =============================================================================
 # CONDITIONAL EDGES

@@ -7,11 +7,12 @@ python-dotenv>=1.0.0
 # Data handling
 pandas>=2.0.0
 
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0  # PostgreSQL adapter
+
 # For Streamlit UI (to be added later)
 streamlit>=1.28.0
-
-# Database (optional - for SQLite testing)
-sqlalchemy>=2.0.0
 
 # Testing (optional)
 pytest>=7.4.0
