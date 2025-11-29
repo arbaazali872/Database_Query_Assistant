@@ -7,13 +7,12 @@ Make sure you have OPENAI_API_KEY in your .env file
 
 import os
 from dotenv import load_dotenv
-import json
 
 # Load environment variables
 load_dotenv()
 
 # Import graph components (assumes all files are in same directory)
-from langgraph_graph import create_inventory_graph, run_full_graph, run_graph_until_confirmation, continue_graph_after_confirmation
+from langgraph_graph import create_inventory_graph, run_graph
 from langgraph_nodes import *
 
 def print_section(title: str):
@@ -23,14 +22,14 @@ def print_section(title: str):
     print("="*80 + "\n")
 
 def test_basic_query():
-    """Test 1: Basic query with auto-confirmation"""
+    """Test 1: Basic query flow"""
     print_section("TEST 1: Basic Query Flow")
     
     query = "Show me all projects from 2021 to 2024"
     print(f"User Query: {query}\n")
     
     # Run the full graph
-    result = run_full_graph(user_query=query, show_sql=True, display_cap=500)
+    result = run_graph(user_query=query, show_sql=True, display_cap=500)
     
     # Print results
     print("📝 Improved Prompt:")
@@ -41,59 +40,74 @@ def test_basic_query():
     
     print("\n📊 Query Results:")
     if result.get("query_results") is not None:
-        print(result["query_results"])
-        print(f"\nMetadata: {result.get('metadata', {})}")
+        # Check if result has a user-friendly message
+        result_message = result.get("metadata", {}).get("result_message")
+        if result_message:
+            print(result_message)
+        
+        # Print the table
+        df = result["query_results"]
+        if len(df) > 0:
+            print(df)
+        else:
+            print("(No rows to display)")
+        
+        # Print metadata
+        metadata = result.get('metadata', {})
+        print(f"\nMetadata: {metadata}")
     else:
         print("No results")
     
     print("\n💡 Insights:")
-    print(result.get("insights", "No insights generated"))
+    insights = result.get("insights")
+    if insights:
+        print(insights)
+    else:
+        print("(No insights generated)")
     
     if result.get("error"):
         print(f"\n❌ Error: {result['error']}")
     
     return result
 
-def test_with_confirmation_flow():
-    """Test 2: Step-by-step execution with manual confirmation simulation"""
-    print_section("TEST 2: Step-by-Step with Confirmation")
+def test_simple_query():
+    """Test 2: Simple query execution"""
+    print_section("TEST 2: Simple Query Execution")
     
-    app = create_inventory_graph()
+    query = "Show top 10 clients by total order amount"
+    print(f"User Query: {query}\n")
     
-    # Initial state
-    state = {
-        "user_input": "Show top 10 clients by total order amount",
-        "show_sql": False,
-        "display_cap": 500,
-        "edit_count": 0,
-        "metadata": {},
-        "user_confirmed": None,  # Will trigger wait state
-    }
+    result = run_graph(query)
     
-    print(f"User Query: {state['user_input']}\n")
-    
-    # Step 1: Run until prompt improvement
-    print("Step 1: Running until prompt improvement...")
-    result = run_graph_until_confirmation(app, state)
-    
-    print("\n📝 Improved Prompt (waiting for confirmation):")
+    print("📝 Improved Prompt:")
     print(result.get("improved_prompt", "N/A"))
-    
-    # Simulate user confirmation
-    print("\n✅ Simulating user confirmation (OK)...")
-    result = continue_graph_after_confirmation(app, result, confirmed=True)
     
     print("\n💾 Generated SQL:")
     print(result.get("sql_query", "N/A"))
     
     print("\n📊 Query Results:")
     if result.get("query_results") is not None:
-        print(result["query_results"])
+        result_message = result.get("metadata", {}).get("result_message")
+        if result_message:
+            print(result_message)
+        
+        df = result["query_results"]
+        if len(df) > 0:
+            print(df)
+        else:
+            print("(No rows to display)")
+        
+        metadata = result.get('metadata', {})
+        print(f"\nMetadata: {metadata}")
     else:
         print("No results")
     
     print("\n💡 Insights:")
-    print(result.get("insights", "No insights generated"))
+    insights = result.get("insights")
+    if insights:
+        print(insights)
+    else:
+        print("(No insights generated)")
     
     return result
 
@@ -104,7 +118,7 @@ def test_error_handling():
     query = "Show me data from nonexistent_table"
     print(f"User Query: {query}\n")
     
-    result = run_full_graph(query)
+    result = run_graph(query)
     
     print("📝 Improved Prompt:")
     print(result.get("improved_prompt", "N/A"))
@@ -124,7 +138,7 @@ def test_insights_generation():
     query = "Show me a breakdown of project budgets by status with average and totals"
     print(f"User Query: {query}\n")
     
-    result = run_full_graph(query)
+    result = run_graph(query)
     
     print("📝 Improved Prompt:")
     print(result.get("improved_prompt", "N/A"))
@@ -132,8 +146,29 @@ def test_insights_generation():
     print("\n💾 Generated SQL:")
     print(result.get("sql_query", "N/A"))
     
+    print("\n📊 Query Results:")
+    if result.get("query_results") is not None:
+        result_message = result.get("metadata", {}).get("result_message")
+        if result_message:
+            print(result_message)
+        
+        df = result["query_results"]
+        if len(df) > 0:
+            print(df)
+        else:
+            print("(No rows to display)")
+        
+        metadata = result.get('metadata', {})
+        print(f"\nMetadata: {metadata}")
+    else:
+        print("No results")
+    
     print("\n💡 Insights (should be generated due to keywords 'breakdown', 'average'):")
-    print(result.get("insights", "No insights generated"))
+    insights = result.get("insights")
+    if insights:
+        print(insights)
+    else:
+        print("(No insights generated)")
     
     return result
 
@@ -154,7 +189,7 @@ def run_all_tests():
         test_basic_query()
         input("\nPress Enter to continue to next test...")
         
-        test_with_confirmation_flow()
+        test_simple_query()
         input("\nPress Enter to continue to next test...")
         
         test_error_handling()

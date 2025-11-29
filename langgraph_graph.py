@@ -9,8 +9,10 @@ def create_inventory_graph():
     Constructs the LangGraph workflow for InventoryDB Agent
     
     Flow:
-    User Input → Schema Retrieval → Prompt Improver → [User Confirms] →
-    Query Generator → Query Runner → User Output → Insights Generator → END
+    User Input → Schema Retrieval → Prompt Improver → Query Generator → 
+    Query Runner → User Output → Insights Generator → END
+    
+    Simple linear flow with no confirmation loops
     """
     
     # Initialize the graph with our state schema
@@ -28,22 +30,10 @@ def create_inventory_graph():
     # Set entry point
     workflow.set_entry_point("user_input")
     
-    # Add edges (linear flow with some conditionals)
+    # Add edges (fully linear flow)
     workflow.add_edge("user_input", "schema_retrieval")
     workflow.add_edge("schema_retrieval", "prompt_improver")
-    
-    # After prompt improvement, wait for user confirmation
-    # In Streamlit, this will be handled by the UI
-    # For now, we'll make it conditional
-    workflow.add_conditional_edges(
-        "prompt_improver",
-        should_continue_after_prompt_improvement,
-        {
-            "generate_query": "query_generator",
-            "improve_again": "prompt_improver",
-            "wait_for_confirmation": END  # Pause for user input in UI
-        }
-    )
+    workflow.add_edge("prompt_improver", "query_generator")
     
     # After query generation, check if valid
     workflow.add_conditional_edges(
@@ -66,51 +56,24 @@ def create_inventory_graph():
     return app
 
 # =============================================================================
-# GRAPH EXECUTION HELPERS
+# CONDITIONAL EDGES
 # =============================================================================
 
-def run_graph_until_confirmation(app, initial_state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Run the graph until it needs user confirmation for improved prompt
-    Returns the state at the confirmation point
-    """
-    # Set user_confirmed to None to trigger wait state
-    initial_state["user_confirmed"] = None
-    
-    result = app.invoke(initial_state)
-    return result
-
-def continue_graph_after_confirmation(app, state: Dict[str, Any], confirmed: bool) -> Dict[str, Any]:
-    """
-    Continue graph execution after user confirms/edits the improved prompt
-    """
-    state["user_confirmed"] = confirmed
-    
-    if confirmed:
-        # User confirmed - proceed with query generation
-        result = app.invoke(state)
-        return result
+def should_proceed_after_query_generation(state: Dict[str, Any]) -> str:
+    """Check if SQL generation was successful"""
+    if state.get("sql_valid") is True:
+        return "run_query"
     else:
-        # User wants to edit - increment edit count
-        state["edit_count"] = state.get("edit_count", 0) + 1
-        
-        # Check if we've hit max edits (prevent infinite loop)
-        if state["edit_count"] >= 10:
-            state["error"] = "Maximum edit attempts reached. Please submit a new query."
-            return state
-        
-        # Re-run prompt improver with edited input
-        result = app.invoke(state)
-        return result
+        return "error"
 
 # =============================================================================
-# CONVENIENCE FUNCTION FOR FULL EXECUTION (for testing)
+# GRAPH EXECUTION HELPER
 # =============================================================================
 
-def run_full_graph(user_query: str, show_sql: bool = False, display_cap: int = 500) -> Dict[str, Any]:
+def run_graph(user_query: str, show_sql: bool = False, display_cap: int = 500) -> Dict[str, Any]:
     """
-    Run the entire graph with auto-confirmation (for testing purposes)
-    In production, this will be split into stages with UI interaction
+    Run the entire graph from start to finish
+    Simple execution with no pauses or confirmations
     """
     app = create_inventory_graph()
     
@@ -118,11 +81,8 @@ def run_full_graph(user_query: str, show_sql: bool = False, display_cap: int = 5
         "user_input": user_query,
         "show_sql": show_sql,
         "display_cap": display_cap,
-        "edit_count": 0,
         "metadata": {},
-        "user_confirmed": True,  # Auto-confirm for testing
     }
-    print(f"initial_state: {initial_state}")
     
     result = app.invoke(initial_state)
     return result
