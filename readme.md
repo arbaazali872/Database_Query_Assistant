@@ -20,7 +20,6 @@ Query Execution → Results Display → Insights Generation
 
 Built with:
 - **LangGraph**: Workflow orchestration
-- **OpenAI GPT-4o-mini**: Natural language understanding
 - **SQLAlchemy**: Database interactions
 - **Streamlit**: User interface
 - **Pandas**: Data handling
@@ -35,6 +34,8 @@ inventorydb-agent/
 ├── README.md                     # This file
 ├── requirements.txt              # Python dependencies
 ├── config.py                     # Configuration and initialization
+├── Dockerfile                    # Docker image definition
+├── docker-compose.yml            # Docker orchestration
 │
 ├── src/                          # Core source code
 │   ├── __init__.py              # Package initialization
@@ -46,67 +47,156 @@ inventorydb-agent/
 │
 ├── app.py                        # Streamlit application
 │
-├── tests/                        # Test suite
-│   ├── __init__.py
-│   └── test_graph.py            # Graph tests
+├── demo/                         # Demo database files
+│   └── init_demo.sql            # Pre-populated test data
+│
 │
 └── logs/                         # Application logs (gitignored)
     └── .gitkeep
 ```
 
-## Setup
+---
 
-### 1. Clone the Repository
+## Setup Options
+
+Choose one of three setup modes:
+
+### **Option 1: Quick Start with Demo Database** (Recommended for Testing)
+
+Try the app immediately with pre-populated sample data.
+
+```bash
+# 1. Clone and enter directory
+git clone [<repo-url>](https://github.com/arbaazali872/Database_Query_Assistant.git)
+cd database_query_assistant
+
+# 2. Create .env file
+cp .env.example .env
+# Edit .env and add your OPENAI_API_KEY
+
+# 3. Start with demo database
+docker-compose --profile demo up
+
+# App runs at: http://localhost:8501
+# Demo DB at: localhost:55432
+# Credentials: demo/demo/inventorydb_demo
+```
+
+**What you get:**
+- ✅ Streamlit app ready to use
+- ✅ PostgreSQL with sample data (clients, projects, orders)
+- ✅ No database setup needed
+
+---
+
+### **Option 2: Use Your Own External Database**
+
+Connect to your existing PostgreSQL database.
+
+```bash
+# 1. Clone and setup
+git clone <your-repo-url>
+cd inventorydb-agent
+
+# 2. Configure .env
+cp .env.example .env
+```
+
+Edit `.env`:
+```bash
+OPENAI_API_KEY=sk-your-key-here
+DATABASE_URL=postgresql://user:password@your-host:5432/your-database
+```
+
+```bash
+# 3. Start app only (no local database)
+docker-compose up app
+
+# App runs at: http://localhost:8501
+```
+
+**What you get:**
+- ✅ Streamlit app connected to your database
+- ✅ No local PostgreSQL container
+- ✅ Works with any accessible PostgreSQL instance
+
+---
+
+### **Option 3: Local PostgreSQL (Clean Database)**
+
+Start a local PostgreSQL database without pre-populated data.
+
+```bash
+# 1. Clone and setup
+git clone <your-repo-url>
+cd inventorydb-agent
+
+# 2. Create .env
+cp .env.example .env
+```
+
+Edit `.env`:
+```bash
+OPENAI_API_KEY=sk-your-key-here
+DATABASE_URL=postgresql://postgres:postgres@db:5432/inventorydb
+```
+
+```bash
+# 3. Start with local database
+docker-compose --profile localdb up
+
+# App runs at: http://localhost:8501
+# Local DB at: localhost:5432
+```
+
+**What you get:**
+- ✅ Streamlit app
+- ✅ Empty local PostgreSQL database
+- ✅ You populate with your own data
+
+---
+
+## Manual Setup (Without Docker)
+
+### 1. Clone and Install
 
 ```bash
 git clone <your-repo-url>
 cd inventorydb-agent
-```
 
-### 2. Create Virtual Environment
-
-```bash
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-### 3. Install Dependencies
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment Variables
-
-Copy `.env.example` to `.env` and fill in your credentials:
+### 2. Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
 Edit `.env`:
-
 ```bash
-# OpenAI API Key
 OPENAI_API_KEY=sk-your-key-here
-
-# PostgreSQL Connection
-DATABASE_URL=postgresql://username:password@host:port/database_name
+DATABASE_URL=postgresql://user:password@host:port/database
 ```
 
-### 5. Run the Application
+### 3. Run Application
 
 ```bash
 streamlit run app.py
 ```
 
-The app will open in your browser at `http://localhost:8501`
+Access at `http://localhost:8501`
+
+---
 
 ## Usage
 
 ### Basic Query
-
-Simply describe what you want in plain English:
 
 ```
 Show me all projects from 2023 with their budgets and client names
@@ -131,31 +221,102 @@ What's the total budget by client industry?
 4. ✅ Display results (up to 500 rows)
 5. ✅ Generate insights automatically
 
+---
+
+## Docker Commands Reference
+
+### Demo Mode
+```bash
+# Start demo environment
+docker-compose --profile demo up
+
+# Stop demo environment
+docker-compose --profile demo down
+
+# Rebuild after code changes
+docker-compose --profile demo up --build
+```
+
+### Local Database Mode
+```bash
+# Start with local PostgreSQL
+docker-compose --profile localdb up
+
+# Stop and remove volumes (clears data)
+docker-compose --profile localdb down -v
+```
+
+### External Database Mode
+```bash
+# Start app only
+docker-compose up app
+
+# Stop app
+docker-compose down
+```
+
+### Useful Commands
+```bash
+# View logs
+docker-compose logs -f app
+
+# Shell into app container
+docker exec -it inventorydb-agent bash
+
+# Connect to demo database
+docker exec -it inventorydb-postgres-demo psql -U demo -d inventorydb_demo
+
+# Clean everything
+docker-compose down -v
+docker system prune -a
+```
+
+---
+
+## Customizing Demo Data
+
+To modify the demo database:
+
+1. Edit `demo/init_demo.sql`
+2. Rebuild:
+```bash
+docker-compose --profile demo down -v
+docker-compose --profile demo up --build
+```
+
+---
+
 ## Safety Features
 
-- **Read-Only**: Only SELECT statements allowed
-- **Query Timeout**: 20-second limit on execution
-- **Schema Validation**: All tables/columns verified before execution
-- **No Data Modification**: INSERT, UPDATE, DELETE, DROP all blocked
-- **Error Handling**: Clear error messages for debugging
+| Feature | Implementation |
+|---------|----------------|
+| **Read-Only** | Only SELECT statements allowed |
+| **Timeout Protection** | 20-second query execution limit |
+| **Schema Validation** | All tables/columns verified before execution |
+| **SQL Injection Prevention** | Parameterized queries via SQLAlchemy |
+| **Error Handling** | Graceful failures at every node |
+
+---
 
 ## Configuration
 
 Edit `config.py` to customize:
 
 ```python
-DEFAULT_MODEL = "gpt-4.1-nano"           # OpenAI model
+DEFAULT_MODEL = "gpt-4o-mini"           # OpenAI model
 DEFAULT_TEMPERATURE = 0.3               # LLM temperature
 DEFAULT_DISPLAY_CAP = 500               # Max rows displayed
 QUERY_TIMEOUT_SECONDS = 20              # Query timeout
 ```
+
+---
 
 ## Development
 
 ### Running Tests
 
 ```bash
-pytest tests/
+pytest tests/ -v
 ```
 
 ### Adding New Nodes
@@ -171,28 +332,59 @@ Edit system prompts in `src/prompts.py`:
 - `QUERY_GENERATOR_SYSTEM`: SQL generation rules
 - `INSIGHTS_GENERATOR_SYSTEM`: Insights generation guidelines
 
+---
+
 ## Troubleshooting
 
 ### Connection Issues
 
-If you see connection errors:
+**Problem**: Can't connect to database
+
+**Solution**:
 1. Check `.env` file exists and has correct credentials
-2. Verify PostgreSQL is running and accessible
-3. Test connection: `psql $DATABASE_URL`
+2. Verify PostgreSQL is running: `docker ps`
+3. Check logs: `docker-compose logs -f`
+4. Test connection: `psql $DATABASE_URL`
+
+### Port Already in Use
+
+**Problem**: `Error: port 8501 already in use`
+
+**Solution**:
+```bash
+# Find and kill process on port 8501
+lsof -ti:8501 | xargs kill -9
+
+# Or change port in docker-compose.yml
+ports:
+  - "8502:8501"  # Use port 8502 instead
+```
 
 ### SQL Generation Errors
 
-If SQL generation fails:
+**Problem**: SQL generation fails
+
+**Solution**:
 - Check that table/column names are spelled correctly
 - Verify schema is being retrieved (check logs)
 - Try simplifying your query
+- Check `logs/inventorydb_agent.log` for details
 
-### No Insights Generated
+### Demo Database Not Populating
 
-Insights are optional and only generated when:
-- Results contain numeric data (3+ rows)
-- Query keywords suggest analysis (trend, compare, etc.)
-- Results are empty (explains why)
+**Problem**: Demo database is empty
+
+**Solution**:
+```bash
+# Remove old volume and restart
+docker-compose --profile demo down -v
+docker-compose --profile demo up
+
+# Verify init_demo.sql exists
+ls demo/init_demo.sql
+```
+
+---
 
 ## Logging
 
@@ -203,9 +395,51 @@ Logs are written to `logs/inventorydb_agent.log` and include:
 - Query execution times
 - Errors and warnings
 
+View logs:
+```bash
+# Real-time logs
+tail -f logs/inventorydb_agent.log
+
+# Docker logs
+docker-compose logs -f app
+```
+
+---
+
+## Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `OPENAI_API_KEY` | OpenAI API key (required) | `sk-proj-...` |
+| `DATABASE_URL` | PostgreSQL connection string (required) | `postgresql://user:pass@host:5432/db` |
+
+---
+
+## Production Deployment
+
+### Security Checklist
+
+- [ ] Use secrets management (not `.env` files)
+- [ ] Enable SSL for `DATABASE_URL`
+- [ ] Use read-only database user
+- [ ] Set resource limits in docker-compose
+- [ ] Enable HTTPS with reverse proxy (nginx)
+- [ ] Configure proper logging and monitoring
+- [ ] Disable debug mode in Streamlit
+
+### Example Production DATABASE_URL
+
+```bash
+DATABASE_URL=postgresql://readonly_user:secure_pass@prod-db.example.com:5432/proddb?sslmode=require
+```
+
+---
+
 ## License
 
 MIT License - see LICENSE file for details
+
+---
 
 ## Contributing
 
@@ -215,9 +449,15 @@ MIT License - see LICENSE file for details
 4. Add tests if applicable
 5. Submit a pull request
 
+---
+
 ## Support
 
 For issues or questions:
 - Check logs in `logs/inventorydb_agent.log`
 - Review error messages in the Streamlit UI
 - Open an issue on GitHub
+
+---
+
+**Built with ❤️ using LangGraph | Read-only by design | Safe for production**
