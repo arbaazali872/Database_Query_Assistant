@@ -1,11 +1,23 @@
 import os
 import json
 import time
+import logging
 from typing import Dict, Any
 from openai import OpenAI
 import pandas as pd
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.exc import SQLAlchemyError
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('inventorydb_agent.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -14,9 +26,10 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL:
     engine = create_engine(DATABASE_URL)
+    logger.info("Database engine initialized successfully")
 else:
     engine = None
-    print("⚠️ WARNING: DATABASE_URL not found in environment variables")
+    logger.warning("DATABASE_URL not found in environment variables")
 
 # =============================================================================
 # PROMPT TEMPLATES (from the plan)
@@ -105,7 +118,7 @@ Output: The insights text only (no preamble like "Here are the insights:")."""
 # HELPER FUNCTIONS
 # =============================================================================
 
-def call_llm(system_prompt: str, user_message: str, model: str = "gpt-4.1-nano") -> str:
+def call_llm(system_prompt: str, user_message: str, model: str = "gpt-4o-mini") -> str:
     """Helper function to call OpenAI API"""
     try:
         response = client.chat.completions.create(
@@ -150,7 +163,7 @@ def sql_schema_retriever(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     if not engine:
         # Fallback to placeholder if no database connection
-        print("⚠️ No database connection - using placeholder schema")
+        logger.warning("No database connection - using placeholder schema")
         placeholder_schema = {
             "tables": {
                 "projects": {
@@ -221,17 +234,17 @@ def sql_schema_retriever(state: Dict[str, Any]) -> Dict[str, Any]:
                 "foreign_keys": foreign_keys
             }
         
-        print(f"✅ Successfully retrieved schema for {len(table_names)} tables: {', '.join(table_names)}")
+        logger.info(f"Successfully retrieved schema for {len(table_names)} tables: {', '.join(table_names)}")
         return {**state, "schema": schema}
         
     except Exception as e:
-        print(f"❌ Error retrieving schema: {str(e)}")
+        logger.error(f"Error retrieving schema: {str(e)}", exc_info=True)
         return {**state, "error": f"Schema retrieval failed: {str(e)}"}
 
 def prompt_improver_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Improves the user's raw prompt using LLM
-    Returns improved prompt for user confirmation
+    Returns improved prompt (no user confirmation needed)
     """
     user_input = state["user_input"]
     schema = state.get("schema", {})
@@ -248,11 +261,10 @@ Improve this prompt for SQL generation."""
     
     improved_prompt = call_llm(PROMPT_IMPROVER_SYSTEM, user_message)
     
-    # Return full state with updates
+    # Return full state with updates - no confirmation needed
     return {
         **state,
-        "improved_prompt": improved_prompt,
-        "user_confirmed": state.get("user_confirmed")  # Preserve confirmation status
+        "improved_prompt": improved_prompt
     }
 
 def query_generator_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -319,6 +331,7 @@ def query_runner_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
     sql_query = state["sql_query"]
     
     if not engine:
+        logger.error("Query execution attempted without database connection")
         return {
             **state,
             "error": "Database connection not available. Please check DATABASE_URL in .env file",
@@ -345,7 +358,7 @@ def query_runner_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
         execution_time = time.time() - start_time
         total_rows = len(query_results)
         
-        print(f"✅ Query executed successfully: {total_rows} rows in {execution_time:.3f}s")
+        logger.info(f"Query executed successfully: {total_rows} rows returned in {execution_time:.3f}s")
         
         return {
             **state,
@@ -361,10 +374,12 @@ def query_runner_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Check for common errors
         if "timeout" in error_msg.lower():
             error_msg = "Query exceeded time limit (20s). Please add filters or narrow your query."
+            logger.warning(f"Query timeout: {sql_query[:100]}...")
         elif "permission denied" in error_msg.lower():
             error_msg = "Permission denied. You don't have access to read from this table."
-        
-        print(f"❌ Query execution failed: {error_msg}")
+            logger.error(f"Permission denied for query: {sql_query[:100]}...")
+        else:
+            logger.error(f"Query execution failed: {error_msg}", exc_info=True)
         
         return {
             **state,
@@ -375,7 +390,7 @@ def query_runner_tool_node(state: Dict[str, Any]) -> Dict[str, Any]:
         }
     
     except Exception as e:
-        print(f"❌ Unexpected error: {str(e)}")
+        logger.error(f"Unexpected error during query execution: {str(e)}", exc_info=True)
         return {
             **state,
             "error": f"Unexpected error: {str(e)}",
