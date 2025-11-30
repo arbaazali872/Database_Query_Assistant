@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: inventorydb-agent
+    ports:
+      - "8501:8501"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - app-network
+    depends_on:
+      - db
+      - db_test
+
+  # Option 1 — Local clean DB (for users who want real DB but no external DB)
+  db:
+    image: postgres:15-alpine
+    container_name: inventorydb-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=inventorydb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - app-network
+    profiles: ["localdb"]
+
+  # Option 2 — Demo/Test DB (pre-populated)
+  db_test:
+    image: postgres:15-alpine
+    container_name: inventorydb-postgres-demo
+    environment:
+      - POSTGRES_USER=demo
+      - POSTGRES_PASSWORD=demo
+      - POSTGRES_DB=inventorydb_demo
+    ports:
+      - "55432:5432"
+    volumes:
+      - ./demo/init_demo.sql:/docker-entrypoint-initdb.d/init_demo.sql
+    restart: unless-stopped
+    networks:
+      - app-network
+    profiles: ["demo"]
+
+volumes:
+  postgres-data:
+
+networks:
+  app-network:
+    driver: bridge
