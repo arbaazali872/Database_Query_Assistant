@@ -68,9 +68,17 @@ cd database_query_assistant
 
 Create `.env` file:
 ```bash
+# Required for all modes
 OPENAI_API_KEY=your_key_here
+
+# Required for Local Database mode
+DATABASE_URL=postgresql://postgres:postgres@db:5432/inventorydb
+
+# Required for External Database mode (Replace with your own)
 DATABASE_URL=postgresql://user:password@host:5432/database
 ```
+
+**Note:** Demo mode only needs `OPENAI_API_KEY` (DATABASE_URL is auto-configured)
 
 ### 2. Choose Your Mode
 

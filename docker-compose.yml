@@ -8,15 +8,12 @@ services:
       - "8501:8501"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://demo:demo@db_test:5432/inventorydb_demo}
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
     networks:
       - app-network
-    depends_on:
-      - db
-      - db_test
 
   # Option 1 — Local clean DB (for users who want real DB but no external DB)
   db:
