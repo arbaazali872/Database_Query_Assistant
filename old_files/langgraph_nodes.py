@@ -118,7 +118,7 @@ Output: The insights text only (no preamble like "Here are the insights:")."""
 # HELPER FUNCTIONS
 # =============================================================================
 
-def call_llm(system_prompt: str, user_message: str, model: str = "gpt-4o-mini") -> str:
+def call_llm(system_prompt: str, user_message: str, model: str = "gpt-4.1-nano") -> str:
     """Helper function to call OpenAI API"""
     try:
         response = client.chat.completions.create(
