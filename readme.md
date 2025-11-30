@@ -18,7 +18,12 @@ User Input → Schema Retrieval → Prompt Improvement → SQL Generation →
 Query Execution → Results Display → Insights Generation
 ```
 
-**Tech Stack**: LangGraph, SQLAlchemy, Streamlit, Pandas
+### Workflow Diagram
+
+![Workflow Diagram](assets/flow_diagram_langgraph.png)
+
+
+**Tech Stack**: LangGraph, OpenAI GPT-4.1-nano SDK, SQLAlchemy, Streamlit, Pandas
 
 ## Project Structure
 
@@ -54,48 +59,39 @@ inventorydb-agent/
 
 ## Quick Start with Docker
 
-### Three Profiles Available:
+### 1. Clone and Setup
 
-**1. Demo Mode** - Pre-populated test database
-```bash
-docker-compose --profile demo up
-```
-- App: http://localhost:8501
-- DB: localhost:55432 (demo/demo/inventorydb_demo)
-
-**2. Local DB** - Empty PostgreSQL database
-```bash
-docker-compose --profile localdb up
-```
-- App: http://localhost:8501
-- DB: localhost:5432 (postgres/postgres/inventorydb)
-
-**3. External DB** - Use your own database
-```bash
-docker-compose up app
-```
-- App: http://localhost:8501
-- Connects to your DATABASE_URL
-
-### Setup
-
-1. **Clone repository**
 ```bash
 git clone https://github.com/arbaazali872/Database_Query_Assistant.git
 cd database_query_assistant
-
 ```
 
-2. **Create `.env` file**
+Create `.env` file:
 ```bash
 OPENAI_API_KEY=your_key_here
 DATABASE_URL=postgresql://user:password@host:5432/database
 ```
 
-3. **Choose a profile and run**
+### 2. Choose Your Mode
+
+**Demo Mode** - Try it with pre-populated sample data
 ```bash
 docker-compose --profile demo up
 ```
+
+**Local Database** - Start with an empty PostgreSQL database
+```bash
+docker-compose --profile localdb up
+```
+
+**External Database** - Connect to your existing database
+```bash
+docker-compose up app
+```
+
+### 3. Access the App
+
+Open your browser: **http://localhost:8501**
 
 ---
 
@@ -168,4 +164,4 @@ MIT License
 
 ---
 
-**Built with ❤️ using LangGraph | Read-only by design | Safe for production**
+**Built with LangGraph | Read-only by design**
