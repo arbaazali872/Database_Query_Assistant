@@ -10,16 +10,16 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from langgraph.graph import StateGraph, END
 
-from config import client
+from config import OPENAI_API_KEY, engine, QUERY_TIMEOUT_SECONDS
 from src.state import AgentState
-from src.tools import tools, get_database_schema, generate_sql_query, execute_sql_query, generate_insights_from_data
+from src.tools import tools
 from src.prompts import AGENT_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
 # Bind tools to the LLM
 from langchain_openai import ChatOpenAI
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0.3, api_key=OPENAI_API_KEY)
 llm_with_tools = llm.bind_tools(tools)
 
 
@@ -74,6 +74,7 @@ def custom_tool_node(state: AgentState) -> AgentState:
         try:
             # Execute the appropriate tool
             if tool_name == "get_database_schema":
+                from src.tools import get_database_schema
                 result = get_database_schema.invoke({})
                 # Cache schema in state
                 try:
@@ -83,6 +84,7 @@ def custom_tool_node(state: AgentState) -> AgentState:
                 tool_messages.append(ToolMessage(content=result, tool_call_id=tool_id))
             
             elif tool_name == "generate_sql_query":
+                from src.tools import generate_sql_query
                 result = generate_sql_query.invoke(tool_args)
                 # Store SQL in state
                 if not result.startswith("ERROR"):
@@ -93,7 +95,6 @@ def custom_tool_node(state: AgentState) -> AgentState:
                 sql_query = tool_args.get("sql_query", "")
                 
                 # Execute query and capture DataFrame
-                from src.tools import engine, QUERY_TIMEOUT_SECONDS
                 from sqlalchemy import text
                 from sqlalchemy.exc import SQLAlchemyError
                 import time
@@ -140,6 +141,7 @@ def custom_tool_node(state: AgentState) -> AgentState:
                 
                 if df is None or len(df) == 0:
                     result = "No data available to generate insights."
+                    tool_messages.append(ToolMessage(content=result, tool_call_id=tool_id))
                 else:
                     # Prepare data summary for insights
                     from src.prompts import INSIGHTS_GENERATOR_SYSTEM
@@ -164,12 +166,16 @@ Generate 2-3 concise insights."""
                     
                     if result:
                         new_state_updates["insights"] = result
-                
-                tool_messages.append(ToolMessage(content=result or "Insights generated.", tool_call_id=tool_id))
+                    
+                    tool_messages.append(ToolMessage(content=result or "Insights generated.", tool_call_id=tool_id))
+            
+            else:
+                # Unknown tool - still need to respond
+                tool_messages.append(ToolMessage(content=f"Unknown tool: {tool_name}", tool_call_id=tool_id))
         
         except Exception as e:
-            logger.error(f"Tool {tool_name} failed: {str(e)}")
-            tool_messages.append(ToolMessage(content=f"Error: {str(e)}", tool_call_id=tool_id))
+            logger.error(f"Tool {tool_name} failed: {str(e)}", exc_info=True)
+            tool_messages.append(ToolMessage(content=f"Error executing {tool_name}: {str(e)}", tool_call_id=tool_id))
     
     # Return updated state
     return {
@@ -206,7 +212,7 @@ def create_react_graph():
     
     # Add nodes
     workflow.add_node("agent", agent_node)
-    workflow.add_node("tools", custom_tool_node)  # Use custom tool node
+    workflow.add_node("tools", custom_tool_node)
     
     # Set entry point
     workflow.set_entry_point("agent")
