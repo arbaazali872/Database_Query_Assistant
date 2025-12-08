@@ -1,18 +1,19 @@
 # Core dependencies
-langgraph>=0.0.20
-langchain>=0.1.0
+streamlit>=1.28.0
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
 openai>=1.0.0
 python-dotenv>=1.0.0
 
-# Data handling
-pandas>=2.0.0
-
 # Database
 sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.0  # PostgreSQL adapter
+psycopg2-binary>=2.9.0
 
-# For Streamlit UI (to be added later)
-streamlit>=1.28.0
+# Data processing
+pandas>=2.0.0
 
 # Testing (optional)
 pytest>=7.4.0
+pytest-cov>=4.1.0

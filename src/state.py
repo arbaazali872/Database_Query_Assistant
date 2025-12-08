@@ -1,57 +1,40 @@
 """
-State definition for the InventoryDB Agent LangGraph workflow
-Defines the structure of data passed between nodes
+State definition for the InventoryDB Agent ReAct workflow
 """
 
-from typing import TypedDict, Optional, Any, Dict
+from typing import TypedDict, Annotated, Sequence
+from langchain_core.messages import BaseMessage
+from operator import add
 import pandas as pd
 
 
-class AgentState(TypedDict, total=False):
+class AgentState(TypedDict):
     """
-    State schema for the InventoryDB Agent workflow
+    State schema for ReAct agent workflow
     
-    Fields are added progressively as the graph executes:
-    - user_input: Original natural language query from user
-    - show_sql: Boolean flag to display SQL in UI
-    - display_cap: Maximum rows to display (default: 500)
-    - schema: Database schema retrieved from PostgreSQL
-    - improved_prompt: Clarified natural language prompt
-    - user_confirmed: Whether user confirmed the improved prompt (for future use)
-    - sql_query: Generated SQL SELECT statement
-    - sql_valid: Boolean indicating if SQL generation was successful
-    - query_results: Pandas DataFrame with query results
-    - total_rows: Total number of rows returned
-    - execution_time: Query execution time in seconds
-    - error: Error message if any step fails
-    - metadata: Additional metadata for display
-    - insights: AI-generated insights about the results
+    Fields:
+    - messages: Conversation history (HumanMessage, AIMessage, ToolMessage)
+    - user_input: Original user query
+    - schema: Database schema (cached)
+    - sql_query: Generated SQL query
+    - query_results: Query execution results (DataFrame)
+    - insights: Generated insights
+    - iteration_count: Number of agent iterations
     """
     
-    # Input fields
+    # Core ReAct state
+    messages: Annotated[Sequence[BaseMessage], add]
+    
+    # User input
     user_input: str
-    show_sql: bool
-    display_cap: int
     
-    # Schema retrieval
-    schema: Dict[str, Any]
+    # Cached data
+    schema: dict
     
-    # Prompt improvement
-    improved_prompt: str
-    user_confirmed: Optional[bool]
-    
-    # Query generation
+    # Tool outputs
     sql_query: str
-    sql_valid: bool
+    query_results: pd.DataFrame
+    insights: str
     
-    # Query execution
-    query_results: Optional[pd.DataFrame]
-    total_rows: int
-    execution_time: float
-    
-    # Error handling
-    error: Optional[str]
-    
-    # Output
-    metadata: Dict[str, Any]
-    insights: Optional[str]
+    # Control
+    iteration_count: int
