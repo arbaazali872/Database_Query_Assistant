@@ -1,13 +1,14 @@
 """
 InventoryDB Agent - Streamlit UI
-Natural Language to SQL Conversion Interface
+ReAct Agent Interface
 
 Run with: streamlit run app.py
 """
 
 import streamlit as st
+import json
 from config import setup_logging
-from src import run_graph, validate_openai_connection, validate_database_connection
+from src import run_agent, validate_openai_connection, validate_database_connection
 
 # Setup logging
 setup_logging()
@@ -64,9 +65,13 @@ st.markdown("---")
 # =============================================================================
 
 st.markdown("""
-**Describe your request in plain English.** Be specific: include date ranges, filters, columns, and whether you want a full table or a sample. 
+**Ask questions in plain English.** The AI agent will automatically:
+- Retrieve database schema
+- Generate SQL queries
+- Execute queries safely
+- Provide insights when helpful
 
-This assistant is **read-only** and will never modify the database. The app will display the result table (first 500 rows) — no download is provided.
+This assistant is **read-only** and will never modify the database.
 """)
 
 st.markdown("---")
@@ -76,17 +81,17 @@ st.markdown("---")
 # =============================================================================
 
 user_query = st.text_area(
-    "Enter your query:",
+    "Enter your question:",
     placeholder="Example: Show me all projects from 2023 with their budgets and client names",
     height=100,
-    help="Describe what data you want to see in plain English"
+    help="Ask anything about your database in plain English"
 )
 
-# Controls row
+# Controls
 col1, col2, col3 = st.columns([1, 1, 4])
 
 with col1:
-    show_sql = st.checkbox("Show SQL", value=False, help="Display the generated SQL query")
+    show_reasoning = st.checkbox("Show Reasoning", value=False, help="Display agent's thought process")
 
 with col2:
     submit_button = st.button("Submit", type="primary", use_container_width=True)
@@ -97,16 +102,11 @@ with col2:
 
 if submit_button:
     if not user_query.strip():
-        st.warning("⚠️ Please enter a query before submitting.")
+        st.warning("⚠️ Please enter a question before submitting.")
     else:
-        with st.spinner("🔄 Processing your query..."):
+        with st.spinner("🤖 Agent is thinking..."):
             try:
-                result = run_graph(
-                    user_query=user_query.strip(),
-                    show_sql=show_sql,
-                    display_cap=500
-                )
-                
+                result = run_agent(user_query=user_query.strip())
                 st.session_state['last_result'] = result
                 
             except Exception as e:
@@ -123,63 +123,62 @@ if 'last_result' in st.session_state:
     st.markdown("---")
     st.subheader("📊 Results")
     
-    # Check for errors first
-    if result.get("error"):
-        st.error(f"❌ **Error:** {result['error']}")
-        
-        if result.get("improved_prompt"):
-            with st.expander("📝 Improved Prompt", expanded=False):
-                st.info(result["improved_prompt"])
-        
-        st.stop()
+    # Extract messages
+    messages = result.get("messages", [])
     
-    # Show improved prompt (collapsed by default)
-    if result.get("improved_prompt"):
-        with st.expander("📝 Improved Prompt (for transparency)", expanded=False):
-            st.info(result["improved_prompt"])
+    # Show reasoning if enabled
+    if show_reasoning and messages:
+        with st.expander("🧠 Agent Reasoning", expanded=False):
+            for i, msg in enumerate(messages):
+                msg_type = type(msg).__name__
+                
+                if hasattr(msg, 'content') and msg.content:
+                    st.markdown(f"**[{i}] {msg_type}:**")
+                    st.text(msg.content)
+                
+                # Show tool calls if present
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    st.markdown(f"**Tool Calls:**")
+                    for tc in msg.tool_calls:
+                        st.json({
+                            "tool": tc["name"],
+                            "args": tc["args"]
+                        })
+                
+                st.markdown("---")
     
-    # Show SQL if toggle was ON
-    if show_sql and result.get("sql_query"):
-        with st.expander("💾 Generated SQL", expanded=True):
-            st.code(result["sql_query"], language="sql")
+    # Find the last AI message without tool calls (final response)
+    final_response = None
+    for msg in reversed(messages):
+        if type(msg).__name__ == "AIMessage":
+            # Skip if it has tool calls (still working)
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                continue
+            # This is the final response
+            if hasattr(msg, 'content') and msg.content:
+                final_response = msg.content
+                break
     
-    # Display results table
-    st.markdown("### Query Results")
+    if final_response:
+        st.markdown("### Agent Response")
+        st.markdown(final_response)
     
-    metadata = result.get("metadata", {})
-    result_message = metadata.get("result_message")
-    
-    if result_message:
-        if "0 rows" in result_message:
-            st.warning(result_message)
-        else:
-            st.info(result_message)
-    
-    # Display the table
-    if result.get("query_results") is not None:
-        df = result["query_results"]
-        
-        if len(df) > 0:
-            st.dataframe(df, use_container_width=True, height=400)
-            
-            total_rows = metadata.get("total_rows", 0)
-            displayed_rows = metadata.get("displayed_rows", 0)
-            execution_time = metadata.get("execution_time", 0)
-            
-            st.caption(f"📈 Rows: {displayed_rows} displayed / {total_rows} total | ⏱️ Execution time: {execution_time:.3f}s")
-        else:
-            st.info("No rows to display.")
-    else:
-        st.warning("No results returned.")
+    # Try to extract and display query results from state
+    query_results = result.get("query_results")
+    if query_results is not None and len(query_results) > 0:
+        st.markdown("### Query Results")
+        st.dataframe(query_results, use_container_width=True, height=400)
+        st.caption(f"📈 Rows: {len(query_results)}")
     
     # Display insights if available
-    if result.get("insights"):
+    insights = result.get("insights")
+    if insights:
         st.markdown("### 💡 Insights")
-        st.markdown(result["insights"])
+        st.markdown(insights)
 
 # =============================================================================
 # FOOTER
 # =============================================================================
 
 st.markdown("---")
-st.caption("🔒 Read-only database access | No data modifications allowed")
+st.caption("🔒 Read-only database access | Powered by ReAct Agent")

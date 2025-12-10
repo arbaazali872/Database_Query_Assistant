@@ -1,19 +1,12 @@
 """
-InventoryDB Agent - Source Package
-Natural Language to SQL conversion using LangGraph
+InventoryDB Agent - Package initialization
 """
 
-from src.graph import run_graph, create_inventory_graph
-from src.state import AgentState
-from src.utils import (
-    validate_openai_connection,
-    validate_database_connection
-)
+from src.graph import run_agent
+from src.utils import validate_openai_connection, validate_database_connection
 
 __all__ = [
-    'run_graph',
-    'create_inventory_graph',
-    'AgentState',
-    'validate_openai_connection',
+    'run_agent',
+    'validate_openai_connection', 
     'validate_database_connection'
 ]
