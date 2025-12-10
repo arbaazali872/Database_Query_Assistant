@@ -5,7 +5,7 @@ Natural Language to SQL conversion using LangGraph and OpenAI. Convert plain Eng
 ## Features
 
 - Natural Language Interface
-- Intelligent Prompt Improvement
+- ReAct Agent Pattern (autonomous tool selection)
 - PostgreSQL-Specific SQL Generation
 - Read-Only Safety (20s timeout)
 - AI-Powered Insights
@@ -14,7 +14,7 @@ Natural Language to SQL conversion using LangGraph and OpenAI. Convert plain Eng
 ## Architecture
 
 ```
-User Input → Schema Retrieval → Prompt Improvement → SQL Generation → 
+User Input → ReAct Agent (reasoning & tool calls loop) → 
 Query Execution → Results Display → Insights Generation
 ```
 
@@ -40,9 +40,9 @@ inventorydb-agent/
 │
 ├── src/                          # Core source code
 │   ├── __init__.py              # Package initialization
-│   ├── nodes.py                 # LangGraph node implementations
-│   ├── graph.py                 # LangGraph workflow definition
+│   ├── graph.py                 # ReAct agent graph definition
 │   ├── state.py                 # State schema definition
+│   ├── tools.py                 # Agent tools
 │   ├── prompts.py               # LLM system prompts
 │   └── utils.py                 # Helper functions
 │
@@ -136,7 +136,7 @@ What's the total budget by client industry?
 ```
 
 The app will:
-1. Clarify your request
+1. Retrieve schema
 2. Generate PostgreSQL SQL
 3. Execute safely (read-only)
 4. Display results (500 row cap)

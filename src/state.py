@@ -2,9 +2,8 @@
 State definition for the InventoryDB Agent ReAct workflow
 """
 
-from typing import TypedDict, Annotated, Sequence
+from typing import TypedDict, Sequence
 from langchain_core.messages import BaseMessage
-from operator import add
 import pandas as pd
 
 
@@ -22,8 +21,8 @@ class AgentState(TypedDict):
     - iteration_count: Number of agent iterations
     """
     
-    # Core ReAct state
-    messages: Annotated[Sequence[BaseMessage], add]
+    # Core ReAct state - NO annotation operator, let nodes handle updates
+    messages: Sequence[BaseMessage]
     
     # User input
     user_input: str

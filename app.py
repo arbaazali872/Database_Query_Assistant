@@ -130,16 +130,34 @@ if 'last_result' in st.session_state:
     if show_reasoning and messages:
         with st.expander("🧠 Agent Reasoning", expanded=False):
             for i, msg in enumerate(messages):
+                msg_type = type(msg).__name__
+                
                 if hasattr(msg, 'content') and msg.content:
-                    msg_type = type(msg).__name__
-                    st.text(f"[{i}] {msg_type}: {msg.content[:200]}...")
+                    st.markdown(f"**[{i}] {msg_type}:**")
+                    st.text(msg.content)
+                
+                # Show tool calls if present
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    st.markdown(f"**Tool Calls:**")
+                    for tc in msg.tool_calls:
+                        st.json({
+                            "tool": tc["name"],
+                            "args": tc["args"]
+                        })
+                
+                st.markdown("---")
     
-    # Find the last AI message (final response)
+    # Find the last AI message without tool calls (final response)
     final_response = None
     for msg in reversed(messages):
-        if hasattr(msg, 'content') and not hasattr(msg, 'tool_calls'):
-            final_response = msg.content
-            break
+        if type(msg).__name__ == "AIMessage":
+            # Skip if it has tool calls (still working)
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                continue
+            # This is the final response
+            if hasattr(msg, 'content') and msg.content:
+                final_response = msg.content
+                break
     
     if final_response:
         st.markdown("### Agent Response")

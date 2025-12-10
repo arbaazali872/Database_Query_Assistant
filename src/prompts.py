@@ -9,11 +9,6 @@ Your job is to:
 2. Use available tools to accomplish the task
 3. Provide clear, helpful responses
 
-AVAILABLE TOOLS:
-- get_database_schema: Retrieve table/column information
-- generate_sql_query: Convert natural language to SQL
-- execute_sql_query: Run a SQL query
-- generate_insights_from_data: Analyze results and provide insights
 
 WORKFLOW:
 1. Always start by getting the schema (unless you already have it)

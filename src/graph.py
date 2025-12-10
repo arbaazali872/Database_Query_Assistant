@@ -30,6 +30,14 @@ def agent_node(state: AgentState) -> AgentState:
     messages = state["messages"]
     iteration_count = state.get("iteration_count", 0)
     
+    # DEBUG: Log message structure
+    logger.info(f"=== AGENT NODE - Iteration {iteration_count + 1} ===")
+    logger.info(f"Current messages count: {len(messages)}")
+    for i, msg in enumerate(messages):
+        msg_type = type(msg).__name__
+        has_tool_calls = hasattr(msg, 'tool_calls') and msg.tool_calls
+        logger.info(f"  [{i}] {msg_type} | tool_calls={has_tool_calls}")
+    
     # Check iteration limit
     if iteration_count >= 5:
         logger.warning("Max iterations reached")
@@ -39,12 +47,17 @@ def agent_node(state: AgentState) -> AgentState:
         }
     
     # Call LLM with tools
+    logger.info("Calling LLM with tools...")
     response = llm_with_tools.invoke(messages)
     
     # Increment iteration count
     new_iteration_count = iteration_count + 1
     
-    logger.info(f"Agent iteration {new_iteration_count}: {len(response.tool_calls)} tool calls")
+    tool_call_count = len(response.tool_calls) if hasattr(response, 'tool_calls') and response.tool_calls else 0
+    logger.info(f"Agent iteration {new_iteration_count}: {tool_call_count} tool calls")
+    
+    if tool_call_count > 0:
+        logger.info(f"Tool calls: {[tc['name'] for tc in response.tool_calls]}")
     
     return {
         **state,
@@ -60,8 +73,18 @@ def custom_tool_node(state: AgentState) -> AgentState:
     messages = state["messages"]
     last_message = messages[-1]
     
+    logger.info(f"=== CUSTOM TOOL NODE ===")
+    logger.info(f"Messages before tool execution: {len(messages)}")
+    
     tool_messages = []
     new_state_updates = {}
+    
+    # Ensure last message has tool_calls
+    if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
+        logger.warning("custom_tool_node called but no tool_calls found")
+        return state
+    
+    logger.info(f"Processing {len(last_message.tool_calls)} tool call(s)")
     
     # Execute each tool call
     for tool_call in last_message.tool_calls:
@@ -69,7 +92,7 @@ def custom_tool_node(state: AgentState) -> AgentState:
         tool_args = tool_call["args"]
         tool_id = tool_call["id"]
         
-        logger.info(f"Executing tool: {tool_name}")
+        logger.info(f"Executing tool: {tool_name} (id={tool_id})")
         
         try:
             # Execute the appropriate tool
@@ -81,7 +104,11 @@ def custom_tool_node(state: AgentState) -> AgentState:
                     new_state_updates["schema"] = json.loads(result)
                 except:
                     pass
-                tool_messages.append(ToolMessage(content=result, tool_call_id=tool_id))
+                tool_messages.append(ToolMessage(
+                    content=result,
+                    tool_call_id=tool_id,
+                    name=tool_name
+                ))
             
             elif tool_name == "generate_sql_query":
                 from src.tools import generate_sql_query
@@ -89,7 +116,11 @@ def custom_tool_node(state: AgentState) -> AgentState:
                 # Store SQL in state
                 if not result.startswith("ERROR"):
                     new_state_updates["sql_query"] = result
-                tool_messages.append(ToolMessage(content=result, tool_call_id=tool_id))
+                tool_messages.append(ToolMessage(
+                    content=result,
+                    tool_call_id=tool_id,
+                    name=tool_name
+                ))
             
             elif tool_name == "execute_sql_query":
                 sql_query = tool_args.get("sql_query", "")
@@ -101,7 +132,11 @@ def custom_tool_node(state: AgentState) -> AgentState:
                 
                 if not engine:
                     result_msg = json.dumps({"error": "Database connection not available"})
-                    tool_messages.append(ToolMessage(content=result_msg, tool_call_id=tool_id))
+                    tool_messages.append(ToolMessage(
+                        content=result_msg,
+                        tool_call_id=tool_id,
+                        name=tool_name
+                    ))
                     continue
                 
                 try:
@@ -125,14 +160,22 @@ def custom_tool_node(state: AgentState) -> AgentState:
                     if total_rows > 0:
                         result_msg += f"\n\nSample data (first 3 rows):\n{query_results_df.head(3).to_string()}"
                     
-                    tool_messages.append(ToolMessage(content=result_msg, tool_call_id=tool_id))
+                    tool_messages.append(ToolMessage(
+                        content=result_msg,
+                        tool_call_id=tool_id,
+                        name=tool_name
+                    ))
                 
                 except SQLAlchemyError as e:
                     error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
                     if "timeout" in error_msg.lower():
                         error_msg = f"Query timeout ({QUERY_TIMEOUT_SECONDS}s)"
                     logger.error(f"Query failed: {error_msg}")
-                    tool_messages.append(ToolMessage(content=f"Error: {error_msg}", tool_call_id=tool_id))
+                    tool_messages.append(ToolMessage(
+                        content=f"Error: {error_msg}",
+                        tool_call_id=tool_id,
+                        name=tool_name
+                    ))
             
             elif tool_name == "generate_insights_from_data":
                 # Get DataFrame from state
@@ -141,7 +184,11 @@ def custom_tool_node(state: AgentState) -> AgentState:
                 
                 if df is None or len(df) == 0:
                     result = "No data available to generate insights."
-                    tool_messages.append(ToolMessage(content=result, tool_call_id=tool_id))
+                    tool_messages.append(ToolMessage(
+                        content=result,
+                        tool_call_id=tool_id,
+                        name=tool_name
+                    ))
                 else:
                     # Prepare data summary for insights
                     from src.prompts import INSIGHTS_GENERATOR_SYSTEM
@@ -167,15 +214,30 @@ Generate 2-3 concise insights."""
                     if result:
                         new_state_updates["insights"] = result
                     
-                    tool_messages.append(ToolMessage(content=result or "Insights generated.", tool_call_id=tool_id))
+                    tool_messages.append(ToolMessage(
+                        content=result or "Insights generated.",
+                        tool_call_id=tool_id,
+                        name=tool_name
+                    ))
             
             else:
                 # Unknown tool - still need to respond
-                tool_messages.append(ToolMessage(content=f"Unknown tool: {tool_name}", tool_call_id=tool_id))
+                tool_messages.append(ToolMessage(
+                    content=f"Unknown tool: {tool_name}",
+                    tool_call_id=tool_id,
+                    name=tool_name
+                ))
         
         except Exception as e:
             logger.error(f"Tool {tool_name} failed: {str(e)}", exc_info=True)
-            tool_messages.append(ToolMessage(content=f"Error executing {tool_name}: {str(e)}", tool_call_id=tool_id))
+            tool_messages.append(ToolMessage(
+                content=f"Error executing {tool_name}: {str(e)}",
+                tool_call_id=tool_id,
+                name=tool_name
+            ))
+    
+    logger.info(f"Created {len(tool_messages)} tool message(s)")
+    logger.info(f"Messages after tool execution: {len(messages) + len(tool_messages)}")
     
     # Return updated state
     return {
