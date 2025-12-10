@@ -71,7 +71,7 @@ Create `.env` file:
 # Required for all modes
 OPENAI_API_KEY=your_key_here
 
-# Required for Local Database mode
+# Required for Local Database mode (DO NOT set for Demo mode)
 DATABASE_URL=postgresql://postgres:postgres@db:5432/inventorydb
 
 # Required for External Database mode (Replace with your own)
