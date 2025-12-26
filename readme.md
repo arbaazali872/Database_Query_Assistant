@@ -128,7 +128,7 @@ Show me all projects from 2023 with their budgets and client names
 ```
 
 ```
-List all orders over $10,000 from the last 6 months
+List all orders over $2,000 from the last 2 years
 ```
 
 ```
