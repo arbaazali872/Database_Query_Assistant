@@ -6,9 +6,12 @@ LLM decides which tools to use dynamically
 import json
 import logging
 import pandas as pd
+import time
 from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from langgraph.graph import StateGraph, END
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from config import OPENAI_API_KEY, engine, QUERY_TIMEOUT_SECONDS
 from src.state import AgentState
@@ -30,13 +33,8 @@ def agent_node(state: AgentState) -> AgentState:
     messages = state["messages"]
     iteration_count = state.get("iteration_count", 0)
     
-    # DEBUG: Log message structure
     logger.info(f"=== AGENT NODE - Iteration {iteration_count + 1} ===")
     logger.info(f"Current messages count: {len(messages)}")
-    for i, msg in enumerate(messages):
-        msg_type = type(msg).__name__
-        has_tool_calls = hasattr(msg, 'tool_calls') and msg.tool_calls
-        logger.info(f"  [{i}] {msg_type} | tool_calls={has_tool_calls}")
     
     # Check iteration limit
     if iteration_count >= 5:
@@ -74,7 +72,6 @@ def custom_tool_node(state: AgentState) -> AgentState:
     last_message = messages[-1]
     
     logger.info(f"=== CUSTOM TOOL NODE ===")
-    logger.info(f"Messages before tool execution: {len(messages)}")
     
     tool_messages = []
     new_state_updates = {}
@@ -95,7 +92,6 @@ def custom_tool_node(state: AgentState) -> AgentState:
         logger.info(f"Executing tool: {tool_name} (id={tool_id})")
         
         try:
-            # Execute the appropriate tool
             if tool_name == "get_database_schema":
                 from src.tools import get_database_schema
                 result = get_database_schema.invoke({})
@@ -110,25 +106,8 @@ def custom_tool_node(state: AgentState) -> AgentState:
                     name=tool_name
                 ))
             
-            elif tool_name == "generate_sql_query":
-                from src.tools import generate_sql_query
-                result = generate_sql_query.invoke(tool_args)
-                # Store SQL in state
-                if not result.startswith("ERROR"):
-                    new_state_updates["sql_query"] = result
-                tool_messages.append(ToolMessage(
-                    content=result,
-                    tool_call_id=tool_id,
-                    name=tool_name
-                ))
-            
             elif tool_name == "execute_sql_query":
                 sql_query = tool_args.get("sql_query", "")
-                
-                # Execute query and capture DataFrame
-                from sqlalchemy import text
-                from sqlalchemy.exc import SQLAlchemyError
-                import time
                 
                 if not engine:
                     result_msg = json.dumps({"error": "Database connection not available"})
@@ -154,11 +133,14 @@ def custom_tool_node(state: AgentState) -> AgentState:
                     
                     # Store DataFrame in state (for Streamlit)
                     new_state_updates["query_results"] = query_results_df
+                    new_state_updates["sql_query"] = sql_query
                     
                     # Return summary to LLM (not full data)
                     result_msg = f"Query executed successfully. Retrieved {total_rows} rows in {execution_time:.3f}s."
                     if total_rows > 0:
-                        result_msg += f"\n\nSample data (first 3 rows):\n{query_results_df.head(3).to_string()}"
+                        result_msg += f"\n\nSample data (first 5 rows):\n{query_results_df.head(5).to_string()}"
+                    else:
+                        result_msg += "\n\nQuery returned 0 rows (empty result set)."
                     
                     tool_messages.append(ToolMessage(
                         content=result_msg,
@@ -177,51 +159,8 @@ def custom_tool_node(state: AgentState) -> AgentState:
                         name=tool_name
                     ))
             
-            elif tool_name == "generate_insights_from_data":
-                # Get DataFrame from state
-                df = state.get("query_results")
-                user_question = state.get("user_input", "")
-                
-                if df is None or len(df) == 0:
-                    result = "No data available to generate insights."
-                    tool_messages.append(ToolMessage(
-                        content=result,
-                        tool_call_id=tool_id,
-                        name=tool_name
-                    ))
-                else:
-                    # Prepare data summary for insights
-                    from src.prompts import INSIGHTS_GENERATOR_SYSTEM
-                    from src.utils import call_llm
-                    
-                    rows = len(df)
-                    data_summary = f"""
-Results: {rows} rows
-
-Sample data (first 10 rows):
-{df.head(10).to_string()}
-"""
-                    
-                    user_message = f"""Original question: {user_question}
-
-Query results:
-{data_summary}
-
-Generate 2-3 concise insights."""
-                    
-                    result = call_llm(INSIGHTS_GENERATOR_SYSTEM, user_message)
-                    
-                    if result:
-                        new_state_updates["insights"] = result
-                    
-                    tool_messages.append(ToolMessage(
-                        content=result or "Insights generated.",
-                        tool_call_id=tool_id,
-                        name=tool_name
-                    ))
-            
             else:
-                # Unknown tool - still need to respond
+                # Unknown tool
                 tool_messages.append(ToolMessage(
                     content=f"Unknown tool: {tool_name}",
                     tool_call_id=tool_id,
@@ -237,7 +176,6 @@ Generate 2-3 concise insights."""
             ))
     
     logger.info(f"Created {len(tool_messages)} tool message(s)")
-    logger.info(f"Messages after tool execution: {len(messages) + len(tool_messages)}")
     
     # Return updated state
     return {

@@ -4,7 +4,6 @@ Each tool performs a specific action the agent can choose
 """
 
 import json
-import time
 import logging
 import pandas as pd
 from typing import Optional
@@ -12,8 +11,7 @@ from langchain_core.tools import tool
 from sqlalchemy import text, inspect
 from sqlalchemy.exc import SQLAlchemyError
 
-from config import engine, QUERY_TIMEOUT_SECONDS
-from src.utils import call_llm, extract_sql_from_response, validate_select_query
+from config import engine
 
 logger = logging.getLogger(__name__)
 
@@ -65,164 +63,25 @@ def get_database_schema() -> str:
 
 
 @tool
-def generate_sql_query(natural_language_request: str, database_schema: str) -> str:
-    """
-    Convert a natural language request into a PostgreSQL SELECT query.
-    
-    Args:
-        natural_language_request: What the user wants to query in plain English
-        database_schema: The database schema (from get_database_schema tool)
-    
-    Returns:
-        Valid PostgreSQL SELECT statement or error message
-    """
-    from src.prompts import QUERY_GENERATOR_SYSTEM
-    
-    user_message = f"""Generate SQL for this request: {natural_language_request}
-
-Database schema:
-{database_schema}
-
-Remember: produce only a single SELECT statement. Validate all tables and columns against the schema above."""
-    
-    sql_response = call_llm(QUERY_GENERATOR_SYSTEM, user_message)
-    
-    # Check if LLM returned an error
-    if sql_response.strip().startswith("ERROR:"):
-        logger.warning(f"SQL generation failed: {sql_response}")
-        return sql_response
-    
-    # Extract SQL from code block
-    sql_query = extract_sql_from_response(sql_response)
-    
-    # Validate the query
-    is_valid, error_msg = validate_select_query(sql_query)
-    
-    if not is_valid:
-        logger.warning(f"SQL validation failed: {error_msg}")
-        return f"ERROR: {error_msg}"
-    
-    logger.info(f"Generated SQL: {sql_query[:100]}...")
-    return sql_query
-
-
-@tool
 def execute_sql_query(sql_query: str) -> str:
     """
-    Execute a SQL query against the database and return results.
+    Execute a SQL query against the database and return results summary.
     Only SELECT queries are allowed (read-only, 20 second timeout).
     
     Args:
         sql_query: Valid PostgreSQL SELECT statement
     
     Returns:
-        JSON string with query results or error message
+        Summary of query execution (row count, sample data)
     """
-    if not engine:
-        logger.error("Database engine not available")
-        return json.dumps({"error": "Database connection not available"})
-    
-    try:
-        start_time = time.time()
-        
-        with engine.connect() as connection:
-            connection.execute(text(f"SET statement_timeout = '{QUERY_TIMEOUT_SECONDS}s'"))
-            result = connection.execute(text(sql_query))
-            query_results = pd.DataFrame(result.fetchall(), columns=result.keys())
-        
-        execution_time = time.time() - start_time
-        total_rows = len(query_results)
-        
-        logger.info(f"Query executed: {total_rows} rows in {execution_time:.3f}s")
-        
-        # Return results as JSON
-        result_dict = {
-            "success": True,
-            "rows": total_rows,
-            "execution_time": execution_time,
-            "data": query_results.to_dict(orient="records")[:500]  # Cap at 500 rows
-        }
-        
-        return json.dumps(result_dict)
-        
-    except SQLAlchemyError as e:
-        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-        
-        if "timeout" in error_msg.lower():
-            error_msg = f"Query timeout ({QUERY_TIMEOUT_SECONDS}s). Please add filters."
-        elif "permission denied" in error_msg.lower():
-            error_msg = "Permission denied for this table."
-        
-        logger.error(f"Query execution failed: {error_msg}")
-        return json.dumps({"error": error_msg})
-    
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        return json.dumps({"error": str(e)})
-
-
-@tool
-def generate_insights_from_data(query_results: str, user_question: str) -> str:
-    """
-    Analyze query results and generate meaningful insights.
-    
-    Args:
-        query_results: JSON string with query results from execute_sql_query
-        user_question: Original user question for context
-    
-    Returns:
-        Insights text (2-3 concise observations)
-    """
-    from src.prompts import INSIGHTS_GENERATOR_SYSTEM
-    
-    # Parse results
-    try:
-        results_dict = json.loads(query_results)
-        
-        if "error" in results_dict:
-            return "Cannot generate insights due to query error."
-        
-        rows = results_dict.get("rows", 0)
-        data = results_dict.get("data", [])
-        
-        if rows == 0:
-            user_message = f"""Original question: {user_question}
-
-Query returned 0 rows (empty result).
-
-Explain what this means in the context of the user's question."""
-            
-            insights = call_llm(INSIGHTS_GENERATOR_SYSTEM, user_message)
-            return insights if insights else "No data matched the query criteria."
-        
-        # Generate insights for non-empty results
-        data_summary = f"""
-Results: {rows} rows
-
-Sample data (first 10 rows):
-{json.dumps(data[:10], indent=2)}
-"""
-        
-        user_message = f"""Original question: {user_question}
-
-Query results:
-{data_summary}
-
-Generate 2-3 concise insights."""
-        
-        insights = call_llm(INSIGHTS_GENERATOR_SYSTEM, user_message)
-        
-        return insights if insights else "Data retrieved successfully."
-        
-    except Exception as e:
-        logger.error(f"Insights generation failed: {str(e)}")
-        return "Unable to generate insights."
+    # This tool is intentionally minimal
+    # The actual execution and DataFrame storage happens in custom_tool_node
+    # This just defines the interface for the agent
+    return "Tool execution handled by custom_tool_node"
 
 
 # Export all tools as a list
 tools = [
     get_database_schema,
-    generate_sql_query,
-    execute_sql_query,
-    generate_insights_from_data
+    execute_sql_query
 ]
